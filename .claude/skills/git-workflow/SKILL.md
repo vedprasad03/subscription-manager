@@ -165,6 +165,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
   ("add login page" not "added login page")
 - Body: wrap at 72 chars, use blank line to separate from subject
 - Reference issues in footer when applicable
+- **Never include a `Co-Authored-By` line** in any commit message
 
 ---
 
