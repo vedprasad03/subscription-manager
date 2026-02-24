@@ -1,2 +1,5 @@
 # Environments
 .env
+
+# Project docs (kept local)
+PRD.md
