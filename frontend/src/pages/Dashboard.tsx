@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { subscriptionsApi, gmailApi, Subscription } from '../api/subscriptions'
+import { subscriptionsApi, gmailApi } from '../api/subscriptions'
 import { useAuth } from '../context/AuthContext'
 import NotificationBell from '../components/NotificationBell'
 import AddSubscriptionModal from '../components/AddSubscriptionModal'

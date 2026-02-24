@@ -1,6 +1,6 @@
-import { FormEvent, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { subscriptionsApi, SubscriptionCreate } from '../api/subscriptions'
+import { subscriptionsApi, type SubscriptionCreate } from '../api/subscriptions'
 
 interface Props {
   onClose: () => void
@@ -27,7 +27,7 @@ export default function AddSubscriptionModal({ onClose }: Props) {
     onError: () => setError('Failed to create subscription.'),
   })
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: { preventDefault(): void }) => {
     e.preventDefault()
     create.mutate({
       ...form,
