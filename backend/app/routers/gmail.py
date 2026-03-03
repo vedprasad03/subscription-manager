@@ -2,10 +2,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
+from jose import JWTError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.security import create_access_token, decode_token
 from app.models.oauth_token import OAuthToken
 from app.models.user import User
 from app.services import gmail as gmail_svc
@@ -19,34 +22,39 @@ router = APIRouter()
 @router.get("/connect")
 def connect_gmail(current_user: User = Depends(get_current_user)):
     """Return the Google OAuth URL for the frontend to redirect to."""
-    url = gmail_svc.get_auth_url()
+    state = create_access_token(str(current_user.id))
+    url = gmail_svc.get_auth_url(state=state)
     return {"url": url}
 
 
 @router.get("/callback")
-def gmail_callback(code: str, db: Session = Depends(get_db)):
+def gmail_callback(code: str, state: str, db: Session = Depends(get_db)):
     """
     Google redirects here after user grants permission.
-    This endpoint is called without a bearer token — we embed user_id in state
-    in a real impl; for now we associate with the most-recently-registered user
-    that doesn't yet have a Gmail token (development shortcut — replace with
-    state-param approach in production).
+    The state parameter is a signed JWT containing the user ID.
     """
-    # TODO: replace with state-param CSRF-safe flow
+    try:
+        claims = decode_token(state)
+        user_id = int(claims["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
     token_data = gmail_svc.exchange_code(code)
 
-    # Find a user without a gmail token (dev shortcut)
-    existing = db.query(OAuthToken).filter(OAuthToken.provider == "gmail").first()
+    existing = (
+        db.query(OAuthToken)
+        .filter(OAuthToken.user_id == user_id, OAuthToken.provider == "gmail")
+        .first()
+    )
     if existing:
         existing.access_token = token_data["access_token"]
         existing.refresh_token = token_data["refresh_token"]
         existing.scopes = token_data["scopes"]
         existing.expires_at = token_data["expires_at"]
-        db.commit()
     else:
-        raise HTTPException(status_code=400, detail="No user session found for OAuth callback")
+        db.add(OAuthToken(user_id=user_id, provider="gmail", **token_data))
 
-    from app.core.config import settings
+    db.commit()
     return RedirectResponse(url=f"{settings.frontend_url}/connect-gmail/success")
 
 
@@ -131,7 +139,10 @@ def scan_inbox(
 
     created = 0
     for email in emails:
-        extracted = extract_subscription(email)
+        try:
+            extracted = extract_subscription(email)
+        except Exception:
+            continue
         if not extracted:
             continue
 

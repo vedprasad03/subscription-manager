@@ -1,6 +1,6 @@
 import base64
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Generator
 
 from google.oauth2.credentials import Credentials
@@ -29,12 +29,13 @@ def build_flow() -> Flow:
     )
 
 
-def get_auth_url() -> str:
+def get_auth_url(state: str) -> str:
     flow = build_flow()
     url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
+        state=state,
     )
     return url
 
@@ -84,13 +85,13 @@ def fetch_subscription_emails(
     """
     Yield dicts of {sender, subject, snippet, body} for emails that look
     like subscription/billing messages. Yields at most 500 chars of body.
+    Defaults to the past year if no after_date is provided.
     """
+    cutoff = after_date or (datetime.now(timezone.utc) - timedelta(days=365))
     query_parts = [
         "subject:(receipt OR invoice OR subscription OR billing OR payment OR renewal OR charged OR \"your plan\")",
+        f"after:{int(cutoff.timestamp())}",
     ]
-    if after_date:
-        ts = int(after_date.timestamp())
-        query_parts.append(f"after:{ts}")
 
     query = " ".join(query_parts)
 
