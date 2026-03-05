@@ -79,6 +79,26 @@ def _decode_body(payload: dict) -> str:
     return ""
 
 
+_CANDIDATE_KEYWORDS = {
+    "receipt", "invoice", "subscri", "billing", "payment", "renewal",
+    "renew", "charged", "unsubscribe", "membership", "your plan",
+    "free trial", "auto-renew", "auto renew", "per month", "per year",
+    "/month", "/year", "amount due", "order confirmation",
+    "payment confirmation", "cancel anytime", "manage subscription",
+}
+
+
+def is_subscription_candidate(email: dict) -> bool:
+    """Return True if the email contains at least one subscription-related keyword."""
+    text = " ".join([
+        email.get("sender", ""),
+        email.get("subject", ""),
+        email.get("snippet", ""),
+        email.get("body", ""),
+    ]).lower()
+    return any(kw in text for kw in _CANDIDATE_KEYWORDS)
+
+
 def fetch_subscription_emails(
     service, after_date: datetime | None = None
 ) -> Generator[dict, None, None]:
@@ -89,7 +109,7 @@ def fetch_subscription_emails(
     """
     cutoff = after_date or (datetime.now(timezone.utc) - timedelta(days=365))
     query_parts = [
-        "subject:(receipt OR invoice OR subscription OR billing OR payment OR renewal OR charged OR \"your plan\")",
+        "(receipt OR invoice OR subscription OR billing OR payment OR renewal OR charged OR unsubscribe OR membership OR \"your plan\" OR \"free trial\" OR \"auto-renew\")",
         f"after:{int(cutoff.timestamp())}",
     ]
 

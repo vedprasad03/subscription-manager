@@ -12,7 +12,7 @@ from app.core.security import create_access_token, decode_token
 from app.models.oauth_token import OAuthToken
 from app.models.user import User
 from app.services import gmail as gmail_svc
-from app.services.ai import extract_subscription
+from app.services.ai import extract_subscriptions_batch, BATCH_SIZE
 from app.models.subscription import Subscription
 from app.models.notification import Notification
 
@@ -135,48 +135,57 @@ def scan_inbox(
         raise HTTPException(status_code=400, detail="Gmail not connected")
 
     service = gmail_svc.build_gmail_service(token.access_token, token.refresh_token)
-    emails = gmail_svc.fetch_subscription_emails(service, after_date=token.last_sync_at)
+    emails_gen = gmail_svc.fetch_subscription_emails(service, after_date=token.last_sync_at)
 
+    # Stage 1: local keyword pre-filter — eliminate obvious non-subscription emails
+    candidates = [e for e in emails_gen if gmail_svc.is_subscription_candidate(e)]
+
+    # Stage 2: batch Claude extraction
     created = 0
-    for email in emails:
+    for i in range(0, len(candidates), BATCH_SIZE):
+        batch = candidates[i : i + BATCH_SIZE]
         try:
-            extracted = extract_subscription(email)
+            results = extract_subscriptions_batch(batch)
         except Exception:
             continue
-        if not extracted:
-            continue
 
-        # Upsert: match on service_name per user
-        existing = (
-            db.query(Subscription)
-            .filter(
-                Subscription.user_id == current_user.id,
-                Subscription.service_name == extracted["service_name"],
-            )
-            .first()
-        )
-        if existing:
-            for k, v in extracted.items():
-                if v is not None:
-                    setattr(existing, k, v)
-            existing.detected_at = datetime.now(timezone.utc)
-        else:
-            sub = Subscription(
-                user_id=current_user.id,
-                source="detected",
-                detected_at=datetime.now(timezone.utc),
-                **extracted,
-            )
-            db.add(sub)
-            created += 1
+        for extracted in results:
+            if not extracted:
+                continue
+            if (extracted.get("confidence_score") or 0) < 0.7:
+                continue
 
-            # Notify user of new detection
-            db.add(Notification(
-                user_id=current_user.id,
-                type="new_subscription",
-                title=f"New subscription detected: {extracted['service_name']}",
-                body=f"We found a subscription for {extracted['service_name']} in your inbox.",
-            ))
+            # Upsert: match on service_name per user
+            existing = (
+                db.query(Subscription)
+                .filter(
+                    Subscription.user_id == current_user.id,
+                    Subscription.service_name == extracted["service_name"],
+                )
+                .first()
+            )
+            if existing:
+                for k, v in extracted.items():
+                    if v is not None:
+                        setattr(existing, k, v)
+                existing.detected_at = datetime.now(timezone.utc)
+            else:
+                sub = Subscription(
+                    user_id=current_user.id,
+                    source="detected",
+                    detected_at=datetime.now(timezone.utc),
+                    **extracted,
+                )
+                db.add(sub)
+                created += 1
+
+                # Notify user of new detection
+                db.add(Notification(
+                    user_id=current_user.id,
+                    type="new_subscription",
+                    title=f"New subscription detected: {extracted['service_name']}",
+                    body=f"We found a subscription for {extracted['service_name']} in your inbox.",
+                ))
 
     token.last_sync_at = datetime.now(timezone.utc)
     db.commit()
