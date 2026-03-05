@@ -141,6 +141,9 @@ def scan_inbox(
     candidates = [e for e in emails_gen if gmail_svc.is_subscription_candidate(e)]
 
     # Stage 2: batch Claude extraction
+    # seen tracks subscriptions upserted this scan (autoflush=False means
+    # db.add() objects aren't visible to subsequent queries until committed)
+    seen: dict[str, Subscription] = {}
     created = 0
     for i in range(0, len(candidates), BATCH_SIZE):
         batch = candidates[i : i + BATCH_SIZE]
@@ -155,12 +158,13 @@ def scan_inbox(
             if (extracted.get("confidence_score") or 0) < 0.7:
                 continue
 
-            # Upsert: match on service_name per user
-            existing = (
+            # Upsert: check in-memory seen dict first, then DB
+            service_name = extracted["service_name"]
+            existing = seen.get(service_name) or (
                 db.query(Subscription)
                 .filter(
                     Subscription.user_id == current_user.id,
-                    Subscription.service_name == extracted["service_name"],
+                    Subscription.service_name == service_name,
                 )
                 .first()
             )
@@ -169,6 +173,7 @@ def scan_inbox(
                     if v is not None:
                         setattr(existing, k, v)
                 existing.detected_at = datetime.now(timezone.utc)
+                seen[service_name] = existing
             else:
                 sub = Subscription(
                     user_id=current_user.id,
@@ -177,6 +182,7 @@ def scan_inbox(
                     **extracted,
                 )
                 db.add(sub)
+                seen[service_name] = sub
                 created += 1
 
                 # Notify user of new detection
